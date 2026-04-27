@@ -27,9 +27,7 @@ info:
     name: ISC
 
 servers:
-  - url: http://localhost:3002
-    description: Local development
-  - url: https://grubpac-api.onrender.com
+  - url: https://content-broadcasting-system-bhgp.onrender.com
     description: Production (Render)
 
 tags:

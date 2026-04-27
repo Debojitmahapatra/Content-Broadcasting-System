@@ -19,7 +19,9 @@ const app = express();
 
 // ── Security & parsing ──────────────────────────────────────────────────────
 app.use(helmet());
-app.use(cors());
+app.use(cors({
+  origin: "*", 
+}));
 
 // ── Request timeout (30 s default) ─────────────────────────────────────────
 app.use(timeoutMiddleware);
