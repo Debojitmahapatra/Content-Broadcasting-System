@@ -1,0 +1,108 @@
+paths:
+  /api/auth/register:
+    post:
+      tags: [Auth]
+      summary: Register a new user
+      description: |
+        Creates a new `teacher` or `principal` account.
+        Returns `409` if the email is already registered.
+      operationId: register
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RegisterRequest'
+            examples:
+              teacher:
+                summary: Register a teacher
+                value:
+                  name: Jane Teacher
+                  email: teacher@school.com
+                  password: Password123
+                  role: teacher
+              principal:
+                summary: Register a principal
+                value:
+                  name: Principal Admin
+                  email: principal@school.com
+                  password: Admin@1234
+                  role: principal
+      responses:
+        '201':
+          description: User registered successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: User registered successfully.
+                  user:
+                    $ref: '#/components/schemas/UserPublic'
+        '409':
+          description: Email already in use
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                status: error
+                message: Email already in use.
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+
+  /api/auth/login:
+    post:
+      tags: [Auth]
+      summary: Login and receive a JWT
+      description: |
+        Authenticates a user and returns a signed JWT valid for **7 days**.
+
+        **Rate limit:** 5 attempts per minute per IP.
+        Use the returned `token` as `Authorization: Bearer <token>` on all protected endpoints.
+      operationId: login
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginRequest'
+            example:
+              email: teacher@school.com
+              password: Password123
+      responses:
+        '200':
+          description: Login successful
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: Login successful.
+                  token:
+                    type: string
+                    description: JWT Bearer token (7-day expiry)
+                    example: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
+                  user:
+                    $ref: '#/components/schemas/UserPublic'
+        '401':
+          description: Invalid email or password
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                status: error
+                message: Invalid email or password.
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'

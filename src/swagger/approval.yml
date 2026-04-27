@@ -1,0 +1,271 @@
+paths:
+  /api/approval:
+    get:
+      tags: [Principal]
+      summary: List all content submissions
+      description: |
+        Returns all content items, optionally filtered by status.
+        Only accessible by users with the `principal` role.
+
+        | `?status` value | Returns |
+        |---|---|
+        | _(omitted)_ | All content regardless of status |
+        | `pending` | Awaiting review |
+        | `approved` | Approved and in rotation |
+        | `rejected` | Rejected with reason |
+      operationId: getAllContent
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: status
+          in: query
+          required: false
+          schema:
+            $ref: '#/components/schemas/ContentStatus'
+          description: Filter by status. Omit to return all.
+          example: pending
+      responses:
+        '200':
+          description: List of content items
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  total:
+                    type: integer
+                    example: 3
+                  status:
+                    type: string
+                    example: all
+                  contents:
+                    type: array
+                    items:
+                      allOf:
+                        - $ref: '#/components/schemas/Content'
+                        - type: object
+                          properties:
+                            uploader:
+                              $ref: '#/components/schemas/UserPublic'
+                            approver:
+                              $ref: '#/components/schemas/UserPublic'
+              examples:
+                allContent:
+                  summary: All content (no filter)
+                  value:
+                    total: 2
+                    status: all
+                    contents:
+                      - id: 1
+                        title: Introduction to Algebra
+                        subject: Maths
+                        status: approved
+                        uploader:
+                          id: 2
+                          name: Jane Teacher
+                          email: teacher@school.com
+                          role: teacher
+                        approver:
+                          id: 1
+                          name: Principal Admin
+                          email: principal@school.com
+                          role: principal
+                      - id: 2
+                        title: Photosynthesis
+                        subject: Science
+                        status: pending
+                        uploader:
+                          id: 2
+                          name: Jane Teacher
+                          email: teacher@school.com
+                          role: teacher
+                        approver: null
+                pendingOnly:
+                  summary: Filtered to pending
+                  value:
+                    total: 1
+                    status: pending
+                    contents:
+                      - id: 2
+                        title: Photosynthesis
+                        subject: Science
+                        status: pending
+        '400':
+          description: Invalid status value
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                status: error
+                message: "Invalid status. Must be one of: pending, approved, rejected."
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+
+  /api/approval/pending:
+    get:
+      tags: [Principal]
+      summary: List pending content submissions (legacy)
+      description: |
+        Shorthand for `GET /api/approval?status=pending`.
+        Kept for backwards compatibility — prefer `GET /api/approval?status=pending`.
+      operationId: getPendingContent
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: List of pending content items
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  contents:
+                    type: array
+                    items:
+                      allOf:
+                        - $ref: '#/components/schemas/Content'
+                        - type: object
+                          properties:
+                            uploader:
+                              $ref: '#/components/schemas/UserPublic'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+
+  /api/approval/approve/{contentId}:
+    post:
+      tags: [Principal]
+      summary: Approve a pending content submission
+      description: |
+        Marks the content as `approved`, records the approver and timestamp,
+        and immediately adds it to the subject's rotation schedule.
+
+        **Constraints:**
+        - Content must currently be `pending`.
+        - A principal cannot approve content they uploaded themselves.
+        - The approval and schedule update are performed atomically in a single DB transaction.
+      operationId: approveContent
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: contentId
+          in: path
+          required: true
+          schema:
+            type: integer
+            example: 1
+          description: ID of the content to approve
+      responses:
+        '200':
+          description: Content approved and added to rotation
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: Content approved successfully.
+                  content:
+                    $ref: '#/components/schemas/Content'
+        '400':
+          description: Content is not in pending state
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                status: error
+                message: Content has already been approved.
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          description: Insufficient role or self-approval attempt
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              examples:
+                insufficientRole:
+                  summary: Not a principal
+                  value:
+                    status: error
+                    message: "Access denied: insufficient permissions."
+                selfApproval:
+                  summary: Approving own content
+                  value:
+                    status: error
+                    message: "You cannot approve content you uploaded."
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+
+  /api/approval/reject/{contentId}:
+    post:
+      tags: [Principal]
+      summary: Reject a pending content submission
+      description: |
+        Marks the content as `rejected` and stores the rejection reason.
+        The content is **not** added to any rotation schedule.
+
+        **Constraint:** Content must currently be `pending`.
+      operationId: rejectContent
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: contentId
+          in: path
+          required: true
+          schema:
+            type: integer
+            example: 1
+          description: ID of the content to reject
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RejectRequest'
+            example:
+              reason: Content does not align with the current curriculum standards.
+      responses:
+        '200':
+          description: Content rejected
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: Content rejected successfully.
+                  content:
+                    $ref: '#/components/schemas/Content'
+        '400':
+          description: Content is not in pending state
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                status: error
+                message: Content has already been rejected.
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'

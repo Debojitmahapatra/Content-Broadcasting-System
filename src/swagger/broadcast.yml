@@ -1,0 +1,139 @@
+paths:
+  /api/broadcast/live/{teacherId}:
+    get:
+      tags: [Public]
+      summary: Get currently active broadcast content
+      description: |
+        Returns the content that is currently playing in each subject channel
+        for the given teacher's approved uploads.
+
+        **No authentication required** — designed for display screens that poll continuously.
+
+        **Rate limit:** 100 requests per minute per IP.
+
+        **Rotation algorithm:**
+        Content items are arranged in a continuous clock-like cycle anchored to
+        `subject_schedules.created_at`. The active item is determined by:
+        ```
+        offset = (elapsedSeconds % totalCycleDuration)
+        ```
+        where `elapsedSeconds` is the time since the schedule was created.
+        Each item occupies a 5-minute slot by default.
+
+        **"No content" scenarios (all return `200` with a message):**
+        - Teacher has no content at all
+        - Teacher has content but none is approved
+        - All approved content is outside its `start_time`/`end_time` window
+        - Schedule exists but all items are filtered out
+        - Invalid `subject` query param (silently ignored, falls back to all subjects)
+
+        **Caching:** Responses are cached in Redis for 10 seconds (when `ENABLE_CACHE=true`).
+        Cached responses include `"fromCache": true`.
+      operationId: getLiveContent
+      parameters:
+        - name: teacherId
+          in: path
+          required: true
+          schema:
+            type: integer
+            minimum: 1
+            example: 2
+          description: ID of the teacher whose content to broadcast
+        - name: subject
+          in: query
+          required: false
+          schema:
+            $ref: '#/components/schemas/Subject'
+          description: |
+            Filter to a single subject. If omitted, all subjects are returned.
+            Invalid values are silently ignored (all subjects returned).
+          example: Maths
+      responses:
+        '200':
+          description: |
+            Active broadcast payload, or a "no content" message.
+            Both cases return HTTP 200 so display screens never crash.
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: '#/components/schemas/BroadcastPayload'
+                  - $ref: '#/components/schemas/MessageResponse'
+              examples:
+                activeContent:
+                  summary: Active content found
+                  value:
+                    teacherId: '2'
+                    timestamp: '2025-01-15T12:00:00.000Z'
+                    activeContent:
+                      Maths:
+                        content:
+                          id: 1
+                          title: Introduction to Algebra
+                          subject: Maths
+                          file_url: uploads/1777213113596-863036245.jpeg
+                          mimetype: image/jpeg
+                          start_time: '2025-01-01T00:00:00.000Z'
+                          end_time: '2025-12-31T23:59:59.000Z'
+                          status: approved
+                        remainingSeconds: 187
+                        nextContent:
+                          id: 3
+                          title: Geometry Basics
+                          subject: Maths
+                    fromCache: false
+                noContent:
+                  summary: No content available
+                  value:
+                    message: No content available
+                cachedResponse:
+                  summary: Served from Redis cache
+                  value:
+                    teacherId: '2'
+                    timestamp: '2025-01-15T12:00:00.000Z'
+                    activeContent:
+                      Science:
+                        content:
+                          id: 5
+                          title: Photosynthesis Diagram
+                          subject: Science
+                        remainingSeconds: 42
+                        nextContent: null
+                    fromCache: true
+        '404':
+          description: Teacher not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                status: error
+                message: Teacher not found.
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+
+  /health:
+    get:
+      tags: [System]
+      summary: Health check
+      description: Returns server status and current UTC timestamp. Used by load balancers and uptime monitors.
+      operationId: healthCheck
+      responses:
+        '200':
+          description: Server is healthy
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: ok
+                  timestamp:
+                    type: string
+                    format: date-time
+                    example: '2025-01-15T12:00:00.000Z'

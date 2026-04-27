@@ -1,0 +1,186 @@
+paths:
+  /api/content/upload:
+    post:
+      tags: [Teacher]
+      summary: Upload new content
+      description: |
+        Uploads a file (image or PDF) along with metadata.
+        The content is created with `status: pending` and queued for principal review.
+
+        **Allowed file types:** JPEG, PNG, GIF, PDF (max 10 MB)
+
+        **Rate limit:** 30 uploads per hour per authenticated user.
+
+        **Time-window rules:**
+        - `end_time` must be after `start_time`
+        - `end_time` must be in the future
+        - Content is only shown in the rotation while `start_time ≤ now < end_time`
+      operationId: uploadContent
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file, title, subject, start_time, end_time]
+              properties:
+                file:
+                  type: string
+                  format: binary
+                  description: Image or PDF file (max 10 MB)
+                title:
+                  type: string
+                  example: Introduction to Algebra
+                description:
+                  type: string
+                  example: A visual guide to basic algebra concepts.
+                subject:
+                  $ref: '#/components/schemas/Subject'
+                start_time:
+                  type: string
+                  format: date-time
+                  description: UTC ISO 8601 – when this content becomes eligible for rotation
+                  example: '2025-01-01T00:00:00.000Z'
+                end_time:
+                  type: string
+                  format: date-time
+                  description: UTC ISO 8601 – when this content expires (must be > start_time and > now)
+                  example: '2025-12-31T23:59:59.000Z'
+      responses:
+        '201':
+          description: Content uploaded and pending approval
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: Content uploaded successfully.
+                  content:
+                    $ref: '#/components/schemas/Content'
+        '400':
+          description: No file provided
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                status: error
+                message: File is required.
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+
+  /api/content/my-uploads:
+    get:
+      tags: [Teacher]
+      summary: List my uploaded content
+      description: Returns all content uploaded by the authenticated user, newest first.
+      operationId: getMyContent
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: List of content items
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  contents:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Content'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+
+  /api/content/{id}:
+    get:
+      tags: [Teacher]
+      summary: Get content by ID
+      description: |
+        Returns a single content item with uploader and approver details.
+        Any authenticated user can fetch any content by ID.
+      operationId: getContentById
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+            example: 1
+          description: Content ID
+      responses:
+        '200':
+          description: Content item with user details
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  content:
+                    $ref: '#/components/schemas/ContentWithUsers'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+
+    delete:
+      tags: [Teacher]
+      summary: Delete content
+      description: |
+        Deletes a content item and its physical file from storage.
+
+        **Rules:**
+        - Teachers can only delete their own `pending` or `rejected` content.
+        - Principals can delete any content regardless of status.
+        - Deleting `approved` content also removes it from the rotation schedule.
+      operationId: deleteContent
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+            example: 1
+          description: Content ID
+      responses:
+        '200':
+          description: Content deleted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MessageResponse'
+              example:
+                message: Content deleted successfully.
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          description: Not the owner, or trying to delete approved content as a teacher
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                status: error
+                message: "Approved content cannot be deleted. Contact the principal."
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'

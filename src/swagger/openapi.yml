@@ -1,0 +1,339 @@
+openapi: 3.0.3
+
+info:
+  title: GrubPac – Content Broadcasting System API
+  version: 1.0.0
+  description: |
+    REST API for the GrubPac Content Broadcasting System.
+
+    **Roles**
+    - `teacher` – uploads content, views own uploads
+    - `principal` – reviews and approves/rejects pending content
+    - _public_ – polls the live broadcast endpoint (no auth required)
+
+    **Authentication**
+    All protected endpoints require a JWT Bearer token obtained from `POST /api/auth/login`.
+
+    **Rate limits**
+    | Endpoint | Limit |
+    |---|---|
+    | `POST /api/auth/login` | 5 req / min per IP |
+    | `POST /api/content/upload` | 30 req / hour per user |
+    | `GET /api/broadcast/live/:teacherId` | 100 req / min per IP |
+
+  contact:
+    name: GrubPac Engineering
+  license:
+    name: ISC
+
+servers:
+  - url: http://localhost:3002
+    description: Local development
+  - url: https://grubpac-api.onrender.com
+    description: Production (Render)
+
+tags:
+  - name: Auth
+    description: Registration and login
+  - name: Teacher
+    description: Content upload and management (teacher role)
+  - name: Principal
+    description: Approval workflow (principal role)
+  - name: Public
+    description: Live broadcast – no authentication required
+  - name: System
+    description: Health check
+
+# ── Shared security scheme ───────────────────────────────────────────────────
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  # ── Reusable schemas ────────────────────────────────────────────────────────
+  schemas:
+    # ── Primitives / enums ──────────────────────────────────────────────────
+    Subject:
+      type: string
+      enum: [Maths, Science, English, Social, Computers]
+      example: Maths
+
+    ContentStatus:
+      type: string
+      enum: [pending, approved, rejected]
+      example: pending
+
+    # ── Domain objects ──────────────────────────────────────────────────────
+    UserPublic:
+      type: object
+      properties:
+        id:
+          type: integer
+          example: 1
+        name:
+          type: string
+          example: Jane Teacher
+        email:
+          type: string
+          format: email
+          example: teacher@school.com
+        role:
+          type: string
+          enum: [principal, teacher]
+          example: teacher
+
+    Content:
+      type: object
+      properties:
+        id:
+          type: integer
+          example: 1
+        title:
+          type: string
+          example: Introduction to Algebra
+        description:
+          type: string
+          nullable: true
+          example: A visual guide to basic algebra concepts.
+        subject:
+          $ref: '#/components/schemas/Subject'
+        file_url:
+          type: string
+          example: uploads/1777213113596-863036245.jpeg
+        file_type:
+          type: string
+          example: jpeg
+        mimetype:
+          type: string
+          example: image/jpeg
+        file_size:
+          type: integer
+          description: File size in bytes
+          example: 204800
+        start_time:
+          type: string
+          format: date-time
+          example: '2025-01-01T00:00:00.000Z'
+        end_time:
+          type: string
+          format: date-time
+          example: '2025-12-31T23:59:59.000Z'
+        status:
+          $ref: '#/components/schemas/ContentStatus'
+        rejection_reason:
+          type: string
+          nullable: true
+          example: null
+        uploaded_by:
+          type: integer
+          example: 2
+        approved_by:
+          type: integer
+          nullable: true
+          example: 1
+        approved_at:
+          type: string
+          format: date-time
+          nullable: true
+          example: '2025-01-15T11:00:00.000Z'
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+
+    ContentWithUsers:
+      allOf:
+        - $ref: '#/components/schemas/Content'
+        - type: object
+          properties:
+            uploader:
+              $ref: '#/components/schemas/UserPublic'
+            approver:
+              $ref: '#/components/schemas/UserPublic'
+              nullable: true
+
+    ActiveContentSlot:
+      type: object
+      properties:
+        content:
+          $ref: '#/components/schemas/Content'
+        remainingSeconds:
+          type: integer
+          description: Seconds until this slot ends and the next item begins
+          example: 187
+        nextContent:
+          $ref: '#/components/schemas/Content'
+          nullable: true
+          description: Preview of the next item in rotation (null if only one item)
+
+    BroadcastPayload:
+      type: object
+      properties:
+        teacherId:
+          type: string
+          example: '2'
+        timestamp:
+          type: string
+          format: date-time
+          example: '2025-01-15T12:00:00.000Z'
+        activeContent:
+          type: object
+          description: Map of subject → active content slot
+          additionalProperties:
+            $ref: '#/components/schemas/ActiveContentSlot'
+          example:
+            Maths:
+              content:
+                id: 1
+                title: Introduction to Algebra
+                subject: Maths
+                file_url: uploads/1777213113596-863036245.jpeg
+              remainingSeconds: 187
+              nextContent: null
+        fromCache:
+          type: boolean
+          description: Present and true when the response was served from Redis cache
+          example: false
+
+    # ── Request bodies ──────────────────────────────────────────────────────
+    RegisterRequest:
+      type: object
+      required: [name, email, password, role]
+      properties:
+        name:
+          type: string
+          example: Jane Teacher
+        email:
+          type: string
+          format: email
+          example: teacher@school.com
+        password:
+          type: string
+          minLength: 8
+          description: Min 8 chars, at least one uppercase letter and one number
+          example: Password123
+        role:
+          type: string
+          enum: [principal, teacher]
+          example: teacher
+
+    LoginRequest:
+      type: object
+      required: [email, password]
+      properties:
+        email:
+          type: string
+          format: email
+          example: teacher@school.com
+        password:
+          type: string
+          example: Password123
+
+    RejectRequest:
+      type: object
+      required: [reason]
+      properties:
+        reason:
+          type: string
+          minLength: 5
+          example: Content does not align with the current curriculum standards.
+
+    # ── Responses ───────────────────────────────────────────────────────────
+    MessageResponse:
+      type: object
+      properties:
+        message:
+          type: string
+          example: No content available
+
+    ErrorResponse:
+      type: object
+      properties:
+        status:
+          type: string
+          example: error
+        message:
+          type: string
+          example: Something went wrong.
+
+    ValidationErrorResponse:
+      type: object
+      properties:
+        status:
+          type: string
+          example: error
+        errors:
+          type: array
+          items:
+            type: object
+            properties:
+              field:
+                type: string
+              message:
+                type: string
+
+  # ── Reusable responses ──────────────────────────────────────────────────
+  responses:
+    Unauthorized:
+      description: Missing or invalid JWT token
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            status: error
+            message: No token provided.
+
+    Forbidden:
+      description: Authenticated but insufficient role/permissions
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            status: error
+            message: "Access denied: insufficient permissions."
+
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            status: error
+            message: Content not found.
+
+    UnprocessableEntity:
+      description: Validation failed
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ValidationErrorResponse'
+
+    TooManyRequests:
+      description: Rate limit exceeded
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            status: error
+            message: "Too many requests. Please try again in a minute."
+
+    ServiceUnavailable:
+      description: Request timed out (30 s limit)
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            status: error
+            message: "Request timed out. Please try again."
+
+# ── Path definitions (split across tag files, merged by loader) ──────────────
+paths: {}

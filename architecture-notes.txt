@@ -1,0 +1,186 @@
+ARCHITECTURE NOTES – GrubPac Content Broadcasting System
+==========================================================
+
+1. AUTHENTICATION & RBAC FLOW
+------------------------------
+- On register, the password is hashed with bcrypt (10 salt rounds) before storage.
+- On login, bcrypt.compare() validates the plaintext password against the stored hash.
+- A JWT is signed with { id, role } and expires in 7 days.
+- Every protected route passes through authMiddleware, which verifies the JWT and
+  attaches the decoded payload to req.user.
+- Role-based access is enforced by the restrictTo(...roles) middleware, which checks
+  req.user.role against the allowed list. A 403 is returned if the role doesn't match.
+- The broadcast endpoint is intentionally unauthenticated — display screens should
+  not need to manage tokens.
+
+Flow:
+  Client → POST /api/auth/login
+         → authController.login validates credentials
+         → JWT signed and returned
+         → Client sends "Authorization: Bearer <token>" on subsequent requests
+         → authMiddleware decodes token → req.user populated
+         → restrictTo('principal') blocks teachers from approval routes
+
+
+2. SUBJECT-BASED ROTATION SYSTEM DESIGN
+-----------------------------------------
+- There are 5 fixed subjects: Maths, Science, English, Social, Computers.
+- Each subject has one SubjectSchedule row (created on first approval for that subject).
+- Each approved content piece becomes a ScheduleItem linked to its subject's schedule,
+  with a rotation_order (1, 2, 3, ...) and a duration_minutes (default: 5).
+- The rotation is continuous and deterministic:
+
+    totalCycleDuration = sum of all active items' duration_minutes (in seconds)
+    elapsedSeconds     = (currentTime - schedule.created_at) in seconds
+    offsetSeconds      = elapsedSeconds % totalCycleDuration
+
+  We then walk through items in rotation_order, accumulating durations, until we find
+  the slot that contains offsetSeconds. That item is currently active.
+
+- "Active" means: the content's start_time <= now <= end_time AND status = 'approved'.
+  Items outside their time window are excluded before the rotation calculation.
+- The response also includes remainingSeconds (time until the current slot ends) and
+  nextContent (the next item in the rotation) for client-side pre-loading.
+
+
+3. UPLOAD HANDLING APPROACH (LOCAL vs S3)
+-------------------------------------------
+Current: Local disk storage via Multer.
+- Files are saved to /uploads with a timestamp-prefixed filename.
+- The file_url stored in the DB is a relative path (e.g., "uploads/1777213113596.jpeg").
+- Files are served statically via Express: app.use('/uploads', express.static(...)).
+- File type validation (fileFilter middleware) allows only images (jpeg, png, gif, webp)
+  and PDFs. Anything else is rejected before Multer saves it.
+- Max file size: 10MB (configured in uploadMiddleware).
+
+For production / S3 migration:
+- Replace multer.diskStorage with multer-s3 or a custom storage engine.
+- Upload the buffer to S3 and store the resulting S3 URL as file_url.
+- Remove the static file serving middleware.
+- Add a CloudFront CDN in front of S3 for low-latency delivery to display screens.
+- No changes needed in controllers or models — only the upload middleware changes.
+
+
+4. APPROVAL WORKFLOW WITH SCHEDULE UPDATES
+--------------------------------------------
+Step-by-step:
+  1. Teacher uploads content → status = 'pending', no schedule entry yet.
+  2. Principal calls POST /api/approval/approve/:contentId.
+  3. approvalController.approveContent():
+     a. Finds the content, validates it is still 'pending'.
+     b. Updates status = 'approved', sets approved_by and approved_at.
+     c. Calls scheduleService.addContentToSchedule(contentId, subject).
+  4. addContentToSchedule():
+     a. FindOrCreate the SubjectSchedule for the subject.
+     b. Finds the current max rotation_order for that schedule.
+     c. Creates a new ScheduleItem with rotation_order = max + 1.
+  5. The new item is immediately live in the rotation on the next broadcast poll.
+  6. On rejection, the content is marked 'rejected' with a reason. No schedule entry
+     is created. The teacher can see the rejection reason via GET /api/content/:id.
+  7. Cache invalidation: after approve or reject, the broadcast cache key for the
+     affected teacher is deleted so the next poll reflects the change.
+
+
+5. SCHEDULING ALGORITHM WITH MODULO TIME CALCULATION
+------------------------------------------------------
+The core insight: the rotation is a clock, not a queue.
+
+Given N items with durations d1, d2, ..., dN (in seconds):
+  totalCycle = d1 + d2 + ... + dN
+  offset     = ((elapsedSeconds % totalCycle) + totalCycle) % totalCycle
+               ↑ double-modulo handles negative elapsed (clock skew edge case)
+
+We then find which item's slot contains `offset`:
+  accumulated = 0
+  for each item in rotation_order:
+    if offset < accumulated + item.duration:
+      → this item is active
+      remainingSeconds = accumulated + item.duration - offset
+    accumulated += item.duration
+
+Example (3 items × 5 min = 900 s cycle):
+  offset 0–299   → item 1 (Algebra)
+  offset 300–599 → item 2 (Geometry)
+  offset 600–899 → item 3 (Calculus)
+  offset 900     → wraps to item 1
+
+The anchor point is schedule.created_at, so the cycle is the same on every server
+instance — no shared state needed for the rotation itself.
+
+
+6. DATABASE DESIGN DECISIONS
+------------------------------
+Why INTEGER primary keys (not UUID):
+- The assignment scope is a single-server deployment. Integer PKs are simpler,
+  faster for joins, and easier to reference in URLs.
+- UUID would be preferred in a distributed system where IDs are generated client-side
+  or across multiple services to avoid collisions.
+
+Why separate SubjectSchedule and ScheduleItem tables (not a JSON column):
+- Allows efficient querying of individual items (e.g., find by content_id).
+- rotation_order and duration_minutes can be updated per-item without rewriting
+  the entire schedule.
+- Enables future features like per-item duration overrides or manual reordering.
+- Cascade deletes: removing a SubjectSchedule removes all its ScheduleItems automatically.
+
+Why Content stores both file_url and mimetype/file_type:
+- file_url is the serving path (relative for local, absolute for S3).
+- mimetype allows the broadcast client to know how to render the content
+  (e.g., <img> vs <embed> for PDF) without fetching the file first.
+
+Why approved_at is stored separately from updatedAt:
+- updatedAt changes on any field update. approved_at is a business timestamp
+  that must be stable and queryable (e.g., "sort by approval order").
+
+
+7. MIDDLEWARE USAGE FLOW
+--------------------------
+Request lifecycle for POST /api/content/upload:
+
+  helmet()           → sets security headers (X-Frame-Options, CSP, etc.)
+  cors()             → allows cross-origin requests
+  express.json()     → parses JSON body
+  authMiddleware     → verifies JWT, populates req.user
+  uploadLimiter      → rate limit: 30 uploads/hour per user ID
+  multer.single()    → parses multipart/form-data, saves file to disk
+  validateFileContent→ checks mimetype whitelist, rejects invalid types
+  uploadContentValidator → express-validator rules for body fields
+  validateRequest    → collects validation errors, returns 422 if any
+  uploadContent()    → controller: creates Content row in DB
+
+For GET /api/broadcast/live/:teacherId (public):
+
+  helmet() → cors() → broadcastLimiter (100/min per IP)
+  → broadcastValidator (validates teacherId param, subject query)
+  → validateRequest → getLiveContent()
+
+
+8. SCALABILITY: REDIS CACHING, RATE LIMITING, READ REPLICAS
+-------------------------------------------------------------
+Redis Caching:
+- Broadcast responses are cached with a 30-second TTL keyed by teacherId + subject.
+- Cache is invalidated on approval/rejection so stale data is never served for long.
+- The app degrades gracefully when Redis is unavailable (ENABLE_CACHE=false or
+  Redis connection fails) — all requests fall through to the database.
+- For higher scale, increase TTL to 60s and accept slightly stale data, or use
+  Redis Pub/Sub to push invalidation events instead of polling.
+
+Rate Limiting:
+- Two separate limiters with different strategies:
+  - broadcastLimiter: keyed by IP (public endpoint, no user context).
+  - uploadLimiter: keyed by user ID (authenticated, prevents abuse per account).
+- Both use in-memory stores by default. For multi-instance deployments, swap to
+  rate-limit-redis store so limits are shared across all instances.
+
+Read Replicas (future):
+- The broadcast endpoint is read-heavy. Add a PostgreSQL read replica and configure
+  Sequelize to route SELECT queries to the replica:
+    const sequelize = new Sequelize({ replication: { read: [...], write: {...} } });
+- The scheduling engine only reads data, making it a perfect candidate for replica reads.
+- Write operations (upload, approve, reject) always go to the primary.
+
+Horizontal Scaling:
+- The rotation algorithm is stateless (anchored to DB timestamps), so multiple API
+  instances will always return the same active content for the same request time.
+- Session state is in JWT (stateless), so no sticky sessions are needed.
+- The only shared state is the rate limiter store — use Redis for this in production.

@@ -1,0 +1,375 @@
+{
+  "info": {
+    "name": "Content Broadcasting System – GrubPac",
+    "_postman_id": "grubpac-cbs-v1",
+    "description": "API collection for the GrubPac Content Broadcasting System. Covers Auth, Teacher content management, Principal approval workflow, and Public broadcast endpoints.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "baseUrl", "value": "http://localhost:3000", "type": "string" },
+    { "key": "token", "value": "", "type": "string" },
+    { "key": "principalToken", "value": "", "type": "string" },
+    { "key": "teacherToken", "value": "", "type": "string" },
+    { "key": "contentId", "value": "1", "type": "string" },
+    { "key": "teacherId", "value": "2", "type": "string" }
+  ],
+  "item": [
+    {
+      "name": "Auth",
+      "description": "Registration and login endpoints for teachers and principals.",
+      "item": [
+        {
+          "name": "Register Teacher",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": { "raw": "{{baseUrl}}/api/auth/register", "host": ["{{baseUrl}}"], "path": ["api", "auth", "register"] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Jane Teacher\",\n  \"email\": \"teacher@school.com\",\n  \"password\": \"Password123!\",\n  \"role\": \"teacher\"\n}"
+            }
+          },
+          "response": [
+            {
+              "name": "201 Created",
+              "status": "Created",
+              "code": 201,
+              "body": "{\n  \"message\": \"User registered successfully.\",\n  \"user\": {\n    \"id\": 2,\n    \"name\": \"Jane Teacher\",\n    \"email\": \"teacher@school.com\",\n    \"role\": \"teacher\"\n  }\n}"
+            }
+          ]
+        },
+        {
+          "name": "Register Principal",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": { "raw": "{{baseUrl}}/api/auth/register", "host": ["{{baseUrl}}"], "path": ["api", "auth", "register"] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Principal Admin\",\n  \"email\": \"principal@school.com\",\n  \"password\": \"Admin@1234\",\n  \"role\": \"principal\"\n}"
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Login Teacher",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "const res = pm.response.json();",
+                  "if (res.token) {",
+                  "  pm.collectionVariables.set('teacherToken', res.token);",
+                  "  pm.collectionVariables.set('token', res.token);",
+                  "  pm.collectionVariables.set('teacherId', res.user.id);",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": { "raw": "{{baseUrl}}/api/auth/login", "host": ["{{baseUrl}}"], "path": ["api", "auth", "login"] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"teacher@school.com\",\n  \"password\": \"Password123!\"\n}"
+            }
+          },
+          "response": [
+            {
+              "name": "200 OK",
+              "status": "OK",
+              "code": 200,
+              "body": "{\n  \"message\": \"Login successful.\",\n  \"token\": \"eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...\",\n  \"user\": {\n    \"id\": 2,\n    \"name\": \"Jane Teacher\",\n    \"email\": \"teacher@school.com\",\n    \"role\": \"teacher\"\n  }\n}"
+            }
+          ]
+        },
+        {
+          "name": "Login Principal",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "const res = pm.response.json();",
+                  "if (res.token) {",
+                  "  pm.collectionVariables.set('principalToken', res.token);",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": { "raw": "{{baseUrl}}/api/auth/login", "host": ["{{baseUrl}}"], "path": ["api", "auth", "login"] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"principal@school.com\",\n  \"password\": \"Admin@1234\"\n}"
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Login – Invalid Credentials",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": { "raw": "{{baseUrl}}/api/auth/login", "host": ["{{baseUrl}}"], "path": ["api", "auth", "login"] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"wrong@school.com\",\n  \"password\": \"wrongpass\"\n}"
+            }
+          },
+          "response": [
+            {
+              "name": "401 Unauthorized",
+              "status": "Unauthorized",
+              "code": 401,
+              "body": "{\n  \"status\": \"error\",\n  \"message\": \"Invalid email or password.\"\n}"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Teacher",
+      "description": "Endpoints for teachers to upload and view their content. Requires Bearer token.",
+      "item": [
+        {
+          "name": "Upload Content",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{teacherToken}}" }
+            ],
+            "url": { "raw": "{{baseUrl}}/api/content/upload", "host": ["{{baseUrl}}"], "path": ["api", "content", "upload"] },
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                { "key": "file", "type": "file", "src": "/path/to/your/file.jpg", "description": "Image or PDF file (max 10MB)" },
+                { "key": "title", "value": "Introduction to Algebra", "type": "text" },
+                { "key": "description", "value": "A visual guide to basic algebra concepts.", "type": "text" },
+                { "key": "subject", "value": "Maths", "type": "text", "description": "One of: Maths, Science, English, Social, Computers" },
+                { "key": "start_time", "value": "2025-01-01T00:00:00.000Z", "type": "text" },
+                { "key": "end_time", "value": "2025-12-31T23:59:59.000Z", "type": "text" }
+              ]
+            }
+          },
+          "response": [
+            {
+              "name": "201 Created",
+              "status": "Created",
+              "code": 201,
+              "body": "{\n  \"message\": \"Content uploaded successfully.\",\n  \"content\": {\n    \"id\": 1,\n    \"title\": \"Introduction to Algebra\",\n    \"subject\": \"Maths\",\n    \"status\": \"pending\",\n    \"file_url\": \"uploads/1777213113596-863036245.jpeg\",\n    \"uploaded_by\": 2\n  }\n}"
+            }
+          ]
+        },
+        {
+          "name": "Get My Uploads",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{teacherToken}}" }
+            ],
+            "url": { "raw": "{{baseUrl}}/api/content/my-uploads", "host": ["{{baseUrl}}"], "path": ["api", "content", "my-uploads"] }
+          },
+          "response": [
+            {
+              "name": "200 OK",
+              "status": "OK",
+              "code": 200,
+              "body": "{\n  \"contents\": [\n    {\n      \"id\": 1,\n      \"title\": \"Introduction to Algebra\",\n      \"subject\": \"Maths\",\n      \"status\": \"pending\",\n      \"created_at\": \"2025-01-15T10:00:00.000Z\"\n    }\n  ]\n}"
+            }
+          ]
+        },
+        {
+          "name": "Get Content By ID",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{teacherToken}}" }
+            ],
+            "url": { "raw": "{{baseUrl}}/api/content/{{contentId}}", "host": ["{{baseUrl}}"], "path": ["api", "content", "{{contentId}}"] }
+          },
+          "response": [
+            {
+              "name": "200 OK",
+              "status": "OK",
+              "code": 200,
+              "body": "{\n  \"content\": {\n    \"id\": 1,\n    \"title\": \"Introduction to Algebra\",\n    \"subject\": \"Maths\",\n    \"status\": \"approved\",\n    \"uploader\": { \"id\": 2, \"name\": \"Jane Teacher\", \"email\": \"teacher@school.com\" },\n    \"approver\": { \"id\": 1, \"name\": \"Principal Admin\", \"email\": \"principal@school.com\" }\n  }\n}"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Principal",
+      "description": "Approval workflow endpoints. Requires principal Bearer token.",
+      "item": [
+        {
+          "name": "Get Pending Content",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{principalToken}}" }
+            ],
+            "url": { "raw": "{{baseUrl}}/api/approval/pending", "host": ["{{baseUrl}}"], "path": ["api", "approval", "pending"] }
+          },
+          "response": [
+            {
+              "name": "200 OK",
+              "status": "OK",
+              "code": 200,
+              "body": "{\n  \"contents\": [\n    {\n      \"id\": 1,\n      \"title\": \"Introduction to Algebra\",\n      \"subject\": \"Maths\",\n      \"status\": \"pending\",\n      \"uploader\": { \"id\": 2, \"name\": \"Jane Teacher\" }\n    }\n  ]\n}"
+            }
+          ]
+        },
+        {
+          "name": "Approve Content",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "const res = pm.response.json();",
+                  "if (res.content) {",
+                  "  pm.collectionVariables.set('contentId', res.content.id);",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{principalToken}}" }
+            ],
+            "url": { "raw": "{{baseUrl}}/api/approval/approve/{{contentId}}", "host": ["{{baseUrl}}"], "path": ["api", "approval", "approve", "{{contentId}}"] }
+          },
+          "response": [
+            {
+              "name": "200 OK",
+              "status": "OK",
+              "code": 200,
+              "body": "{\n  \"message\": \"Content approved successfully.\",\n  \"content\": {\n    \"id\": 1,\n    \"status\": \"approved\",\n    \"approved_by\": 1,\n    \"approved_at\": \"2025-01-15T11:00:00.000Z\"\n  }\n}"
+            }
+          ]
+        },
+        {
+          "name": "Reject Content",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{principalToken}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "url": { "raw": "{{baseUrl}}/api/approval/reject/{{contentId}}", "host": ["{{baseUrl}}"], "path": ["api", "approval", "reject", "{{contentId}}"] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"reason\": \"Content does not align with the current curriculum standards.\"\n}"
+            }
+          },
+          "response": [
+            {
+              "name": "200 OK",
+              "status": "OK",
+              "code": 200,
+              "body": "{\n  \"message\": \"Content rejected successfully.\",\n  \"content\": {\n    \"id\": 1,\n    \"status\": \"rejected\",\n    \"rejection_reason\": \"Content does not align with the current curriculum standards.\"\n  }\n}"
+            }
+          ]
+        },
+        {
+          "name": "Reject Content – Already Processed",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{principalToken}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "url": { "raw": "{{baseUrl}}/api/approval/reject/{{contentId}}", "host": ["{{baseUrl}}"], "path": ["api", "approval", "reject", "{{contentId}}"] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"reason\": \"Duplicate submission.\"\n}"
+            }
+          },
+          "response": [
+            {
+              "name": "400 Bad Request",
+              "status": "Bad Request",
+              "code": 400,
+              "body": "{\n  \"status\": \"error\",\n  \"message\": \"Content has already been approved.\"\n}"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Public",
+      "description": "Public broadcast endpoint — no authentication required. Rate limited to 100 req/min per IP.",
+      "item": [
+        {
+          "name": "Get Live Broadcast (All Subjects)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/broadcast/live/{{teacherId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "broadcast", "live", "{{teacherId}}"]
+            }
+          },
+          "response": [
+            {
+              "name": "200 OK – Active Content",
+              "status": "OK",
+              "code": 200,
+              "body": "{\n  \"teacherId\": \"2\",\n  \"timestamp\": \"2025-01-15T12:00:00.000Z\",\n  \"activeContent\": {\n    \"Maths\": {\n      \"content\": {\n        \"id\": 1,\n        \"title\": \"Introduction to Algebra\",\n        \"subject\": \"Maths\",\n        \"file_url\": \"uploads/1777213113596-863036245.jpeg\"\n      },\n      \"remainingSeconds\": 187,\n      \"nextContent\": {\n        \"id\": 3,\n        \"title\": \"Geometry Basics\"\n      }\n    }\n  }\n}"
+            },
+            {
+              "name": "200 OK – No Content",
+              "status": "OK",
+              "code": 200,
+              "body": "{\n  \"message\": \"No content available\"\n}"
+            }
+          ]
+        },
+        {
+          "name": "Get Live Broadcast (Filter by Subject)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/broadcast/live/{{teacherId}}?subject=Maths",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "broadcast", "live", "{{teacherId}}"],
+              "query": [{ "key": "subject", "value": "Maths", "description": "One of: Maths, Science, English, Social, Computers" }]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Health Check",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{baseUrl}}/health", "host": ["{{baseUrl}}"], "path": ["health"] }
+          },
+          "response": [
+            {
+              "name": "200 OK",
+              "status": "OK",
+              "code": 200,
+              "body": "{\n  \"status\": \"ok\",\n  \"timestamp\": \"2025-01-15T12:00:00.000Z\"\n}"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
